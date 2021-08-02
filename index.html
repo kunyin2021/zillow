@@ -1,0 +1,479 @@
+<html>
+<script src='https://d3js.org/d3.v5.min.js'></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3-legend/2.25.6/d3-legend.min.js"></script>
+<style> 
+	.wrapper {
+	  display: grid;
+	  grid-template-columns: repeat(5, 1fr);
+	  gap: 5px;
+	  grid-template-rows: 1fr 4fr 4fr;
+	}
+
+	.one {
+	  grid-column: 1 / 6;
+	  grid-row: 1 / 1;
+
+	}
+	.sidebar {
+	  grid-column: 1;
+	  grid-row: 2 / 4;
+	  border-style: solid;
+	
+	}
+
+	.button {
+	  background-color: #4CAF50; /* Green */
+	  border: none;
+	  color: white;
+	  padding: 20px;
+	  text-align: center;
+	  text-decoration: none;
+	  display: inline-block;
+	  font-size: 16px;
+	  margin: 4px 2px;
+	  cursor: pointer;
+	}
+	.mainspace {
+	  grid-column: 2 / 5;
+	  grid-row: 2 / 4;
+	}
+	.bar:hover {
+		fill: #66ff66;
+	}
+	.state{
+		fill: none;
+		stroke: #a9a9a9;
+		stroke-width: 1;
+	}
+	.state:hover{
+		fill-opacity:0.8;
+	}
+	#myselect {
+       height: 380px;
+       width: 220px;
+       overflow: scroll;
+       background-color: #ccffeb;
+ 	}
+	.userguide {
+		margin: 10px;
+	}
+	.y.axis path {
+		display: none;
+	}
+	div.tooltip {
+	  color: red;
+	  position: absolute;
+	  text-align: center;
+	  min-width: 65px;
+	  height: auto;
+	  padding: 2px;
+	  font: 12px sans-serif;
+	  background: rgba(0,0,0,.8);
+	  border: 2px solid black;
+	  pointer-events: none;
+	}
+	
+</style>
+<body>
+
+<div class="wrapper">
+  <div class="one">
+  	<p>Data source is from: <a href="https://www.zillow.com/research/data/">Zillow Data</a> . I did some basic data cleaning</p>
+  	<p>This is a visualization for Home Value changes over time</p>
+  </div>
+
+  <div class="mainspace">
+  	<svg id="workspace">
+	</svg>
+
+  </div>
+
+  <div class="sidebar">
+  	
+  	<div class="userguide">
+  		<button class="button" onclick="showMapChart()">show overview map chart</button>
+  	</div>
+  	<div class="userguide">
+  		<button class="button" onclick="showBarChart()">show compare bar chart</button>
+  		
+  	</div>
+  	<div class="userguide">
+
+  		You can choose any state to see the house price changes over years
+
+  		<select size="10" onchange="userMadeSelect()" id="myselect" class="customSelect">
+    	<option value='test'>--Choose a State--</option>
+  		</select>
+  	</div>
+  </div>
+</div>
+
+<script src="uStates.js"></script> <!-- creates uStates. -->
+<script type="text/javascript" src="raw_data.js"></script>
+<script>
+ 
+var margin = 50;
+var width = 900;
+var height = 650;
+var max_price = 730521;
+var min_price = 50000;
+
+// get source data about house price
+// var data = await d3.csv('https://kunyin2021.github.io/zillow/State_zhvi_month_detail.csv');
+var data = raw_data;
+
+var bisect = d3.bisector(d => d.x).left;
+
+
+var rangeColor = d3.scaleLinear()
+                .domain([min_price, max_price])
+                .range(["#f2e6ff", "#4d0099"])
+                .interpolate(d3.interpolateHcl);
+
+
+const data_new = [];
+const map_data = {};
+
+// convert data
+data.forEach(function(element) {
+	element_new = {};
+	element_new['RegionName'] = element['RegionName'];
+	element_new['StateName'] = element['StateName'];
+
+	house_price = [];
+	latest_price = 0;
+	for (const [key, value] of Object.entries(element)) {
+		if(key.localeCompare('RegionName') != 0 && key.localeCompare('StateName') != 0) {
+			var temp = {};
+			temp['date'] = key;
+			temp['value'] = parseInt(value);
+			house_price.push(temp);
+		}
+		if(key.localeCompare('2021-06-30') == 0) {
+			latest_price = parseInt(value);
+		}
+		
+
+	}
+	element_new['house_price'] = house_price;
+	element_new['latest_price'] = latest_price;
+	data_new.push(element_new);
+
+	// store map data for each state
+	//
+	//map_data[element.StateName] = {RegionName: element['RegionName'],latest_price: latest_price, color:getColor(latest_price)};
+	map_data[element.StateName] = {RegionName: element['RegionName'], history_price: element_new ,latest_price: latest_price, color:rangeColor(latest_price)};
+
+});
+// sort bars based on latest value
+//data = data_new;
+data = data_new.sort(function(a, b){
+	return d3.ascending(a.latest_price, b.latest_price);
+});
+// Define the div for the tooltip
+const div_tooltip = d3
+  .select('body')
+  .append('div')
+  .attr('class', 'tooltip')
+  .style('display', 'none');
+
+const formatTime = d3.timeFormat('%e %B');
+
+
+// add select options
+data.forEach(function(item){
+	const optionObj = document.createElement("option");
+	optionObj.textContent = item.RegionName;
+	optionObj.value = item.StateName;
+	document.getElementById("myselect").appendChild(optionObj);
+});
+
+
+// only show map chart when loading the page.
+showMapChart();
+
+function userMadeSelect() {
+	var x = document.getElementById("myselect").value;
+	if(x in map_data) {
+		showLinearPlot(map_data[x].history_price);
+	}
+}
+
+function updateSelected(value) {
+	let element = document.getElementById("myselect");
+	element.value = value;
+}
+
+function showMapChart() {
+	mouseout();
+	updateSelected('test');
+	// hide previous chart
+     d3.select("svg").selectAll("*").remove();
+	uStates.draw("#statesvg", map_data, div_tooltip);
+}
+
+function showLinearPlot(d) { // d is one of the element from data array.
+    mouseout();
+    updateSelected(d.StateName);
+
+     d3.select("svg").selectAll("*").remove();
+	drawLinearChart(d);
+}
+function drawLinearChart(d) {
+	console.log(d);
+
+	// add title
+                d3.select('svg').append("text")
+			        .attr("x", (width / 2))             
+			        .attr("y", (margin / 2))
+			        .attr("text-anchor", "middle")  
+			        .style("font-size", "16px") 
+			        .style("text-decoration", "underline")  
+			        .text(d.RegionName + " State home price changing over 20 Years");
+
+			     // add text for axis
+			        d3.select('svg').append("text")
+			        .attr("x", (width + 50))             
+			        .attr("y", (height + 80))
+			        .attr("text-anchor", "middle")  
+			        .style("font-size", "16px") 
+			        .text("Year");
+
+			       d3.select('svg').append("text")
+			        .attr("x", (30))             
+			        .attr("y", (40))
+			        .attr("text-anchor", "middle")  
+			        .style("font-size", "16px") 
+			        .text("$");
+
+
+	var svg = d3.select("svg")
+		.attr("width",width + 2*margin)
+	    .attr("height",height + 2*margin)
+	    .append("g")
+	    .attr("transform","translate(" + margin + "," + margin + ")");
+
+// DATE 
+        bisectDate = d3.bisector(function(d) { return d.date; }).left;
+       
+
+
+	var RegionName = d.RegionName;
+	var housePriceData = d.house_price;
+	housePriceData.forEach(function(d){
+		d['date'] = d3.timeParse("%Y-%m-%d")(d.date);
+		// d.date = parseDate(d.date);
+	});
+
+
+	var data = housePriceData;
+
+
+	// add X axis
+	var x = d3.scaleTime()
+      .domain(d3.extent(data, function(d) { return d.date; }))
+      .range([ 0, width ]);
+
+    svg.append("g")
+      .attr("transform", "translate(0," + height + ")")
+      .call(d3.axisBottom(x));
+
+    // Add Y axis
+    var y = d3.scaleLinear()
+      .domain([min_price , d3.max(data, function(d) { return +d.value; })])
+      .range([ height, 0 ]);
+    svg.append("g")
+      .call(d3.axisLeft(y));
+
+     // draw the line
+     svg.append("path")
+      .datum(data)
+      .attr("fill", "none")
+      .attr("stroke", "#9933ff")
+      .attr("stroke-width", 1.5)
+      .attr("stroke-linejoin", "round")
+      .attr("stroke-linecap", "round")
+      .attr("d", d3.line()
+      .x(function(d) { return x(d.date) })
+      .y(function(d) { return y(d.value) })
+    ); 
+
+
+    // add focus as tooltip
+    var focus = svg.append("g")
+            .attr("class", "focus")
+            .style("display", "none");
+
+        focus.append("circle")
+            .attr("r", 5);
+
+        focus.append("rect")
+            .attr("class", "tooltip")
+            .attr("width", 100)
+            .attr("height", 50)
+            .attr("x", 10)
+            .attr("y", -22)
+            .attr("rx", 4)
+            .attr("ry", 4);
+
+        focus.append("text")
+            .attr("class", "tooltip-date")
+            .attr("x", 18)
+            .attr("y", -2);
+
+        focus.append("text")
+            .attr("x", 18)
+            .attr("y", 18)
+            .text("Likes:");
+
+        focus.append("text")
+            .attr("class", "tooltip-likes")
+            .attr("x", 60)
+            .attr("y", 18);
+
+        svg.append("rect")
+          	
+            .attr("width", width)
+            .attr("height", height)
+            .style("fill", "none")
+            .on("mouseover", function() { focus.style("display", null); })
+            .on("mouseout", function() { focus.style("display", "none"); })
+            .on("mousemove", mousemove);
+
+        function mousemove() {
+            var x0 = x.invert(d3.mouse(this)[0]),
+                i = bisectDate(data, x0, 1),
+                d0 = data[i - 1],
+                d1 = data[i],
+                d = x0 - d0.date > d1.date - x0 ? d1 : d0;
+
+                console.log(d);
+
+            focus.attr("transform", "translate(" + x(d.date) + "," + y(d.likes) + ")");
+            focus.select(".tooltip-date").text(dateFormatter(d.date));
+            focus.select(".tooltip-likes").text(formatValue(d.likes));
+        }            
+                 
+}
+
+function showBarChart() {
+     mouseout();
+     updateSelected('test');
+     d3.select("svg").selectAll("*").remove();
+     drawBarChart();
+}
+
+function drawBarChart() {
+
+	var y = d3.scaleBand()
+          .range([height, 0])
+          .padding(0.1);
+
+	var x = d3.scaleLinear()
+	          .range([0, width]); 
+
+	y.domain(data.map(function (d){ return d['StateName']; }));
+
+	x.domain([0, d3.max(data, function(d) { return d.latest_price; })]);
+	 
+
+	var chart = d3.select("svg");
+	 
+	chart.attr("width",width + 2*margin)
+	    .attr("height",height + 2*margin)
+	    .append("g")
+	    .attr("transform","translate(" + margin + "," + margin + ")")
+	    .selectAll(".bar")
+		.data(data)
+	    .enter().append("rect")
+	    .attr("class", "bar")
+		.on('mouseover', mouseover)
+	    .on('mousemove', mousemove)
+	    .on('mouseout', mouseout)
+	    .on("click", function(d) {
+		  showLinearPlot(d);
+		})
+	    .attr("y", function (d) { return y(d['StateName']); })
+	    .attr("height", y.bandwidth())
+	    .attr("x", 0)
+		.attr("width", function(d) { return x(d['latest_price']); })
+		.attr("fill", function (d){ return getColor(d['latest_price']); });
+
+	// add text on bar 
+	chart.selectAll("text.bar")
+		.data(data)
+		.enter().append("text")
+		.attr("class", "bar")
+		
+	      .attr("text-anchor", "middle")
+	      .attr("x", function(d) { return x(d['latest_price']) + 75 ; })
+	      .attr("y", function (d) { return y(d['StateName']) + 59; })
+	      .style('font-size', '11px')
+	      .text(function(d) { return d.latest_price; });
+
+	     // add text for axis
+			        d3.select('svg').append("text")
+			        .attr("x", (width + 50))             
+			        .attr("y", (height + 80))
+			        .attr("text-anchor", "middle")  
+			        .style("font-size", "16px") 
+			        .text("$");
+
+	     // add text for axis
+			        d3.select('svg').append("text")
+			        .attr("x", (30))             
+			        .attr("y", (40))
+			        .attr("text-anchor", "middle")  
+			        .style("font-size", "16px") 
+			        .text("State");
+
+  // add the x Axis
+  chart.append("g")
+      .attr("transform", "translate(" + margin + "," + (height+margin) + ")")
+      .call(d3.axisBottom(x));
+
+  // add the y Axis
+  chart.append("g")
+  .attr("transform", "translate(" + margin + "," + margin + ")")
+      .call(d3.axisLeft(y));
+
+ 		// add title
+                d3.select('svg').append("text")
+			        .attr("x", (width / 2))             
+			        .attr("y", (margin / 2))
+			        .attr("text-anchor", "middle")  
+			        .style("font-size", "16px") 
+			        .style("text-decoration", "underline")  
+			        .text("Home Value Ranking accross States of 2021-06");
+
+}
+
+function mouseover(){
+        div_tooltip.style('display', 'inline');
+}
+
+function mousemove(){
+        var d = d3.select(this).data()[0]
+        div_tooltip
+            .html(d.RegionName + '<hr/>' + '$ ' + d.latest_price)
+            .style('left', (d3.event.pageX + 34) + 'px')
+            .style('top', (d3.event.pageY - 12) + 'px');
+}
+function mouseout(){
+        div_tooltip.style('display', 'none');
+}
+
+
+
+function getColor(price) {
+	return d3.interpolateRgb("#f2e6ff", "#4d0099")(price/max_price);
+}
+var colorScale = d3.scaleLinear()
+    .domain([0,max_price])
+    .range(["#f2e6ff", "#4d0099"]);
+
+
+</script>
+</body>
+</html>
+
